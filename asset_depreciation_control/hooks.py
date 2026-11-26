@@ -5,6 +5,32 @@ app_description = "Controlled editing of Asset Depreciation Schedules in ERPNext
 app_email = "admin@example.com"
 app_license = "mit"
 
+required_apps = ["erpnext"]
+
+doctype_js = {
+	"Asset": "public/js/asset.js",
+	"Asset Depreciation Schedule": "public/js/asset_depreciation_schedule.js",
+}
+
+override_doctype_class = {
+	"Asset": "asset_depreciation_control.overrides.asset.ControlledAsset",
+	"Asset Depreciation Schedule": "asset_depreciation_control.overrides.asset_depreciation_schedule.ControlledAssetDepreciationSchedule",
+}
+
+doc_events = {
+	"Depreciation Schedule": {
+		"validate": "asset_depreciation_control.overrides.depreciation_schedule.prevent_direct_change",
+		"before_update_after_submit": "asset_depreciation_control.overrides.depreciation_schedule.prevent_direct_change",
+		"on_trash": "asset_depreciation_control.overrides.depreciation_schedule.prevent_direct_change",
+	}
+}
+
+override_whitelisted_methods = {
+	"erpnext.assets.doctype.asset.depreciation.make_depreciation_entry": "asset_depreciation_control.overrides.depreciation.make_depreciation_entry",
+	"erpnext.assets.doctype.asset.asset.split_asset": "asset_depreciation_control.overrides.depreciation.split_asset",
+	"erpnext.assets.doctype.asset_depreciation_schedule.asset_depreciation_schedule.get_asset_depr_schedule_doc": "asset_depreciation_control.overrides.depreciation.get_asset_depr_schedule_doc",
+}
+
 # Apps
 # ------------------
 
