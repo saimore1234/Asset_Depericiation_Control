@@ -341,8 +341,19 @@ def validate_rows_locked(doc, stored):
 		throw_locked(_("Rows cannot be added, deleted or reordered."))
 
 	for row, old in zip(rows, old_rows, strict=True):
-		if row_values(row) != row_values(old):
+		fields = ROW_FIELDS
+		if not row.journal_entry and is_reversed(old.journal_entry):
+			fields = tuple(f for f in ROW_FIELDS if f != "journal_entry")
+
+		if row_values(row, fields) != row_values(old, fields):
 			throw_locked(_("Row {0} cannot be changed.").format(old.idx))
+
+
+def is_reversed(journal_entry):
+	"""Restoring a disposed Asset reverses an entry, then unlinks it from its row."""
+	return bool(
+		journal_entry and frappe.db.exists("Journal Entry", {"reversal_of": journal_entry, "docstatus": 1})
+	)
 
 
 def validate_locked(doc, fieldnames=None):

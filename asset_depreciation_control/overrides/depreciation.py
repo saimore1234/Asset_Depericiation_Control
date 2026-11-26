@@ -41,3 +41,10 @@ def get_asset_depr_schedule_doc(asset_name, status, finance_book=None):
 		doc = erpnext_schedule.get_asset_depr_schedule_doc(asset_name, "Draft", finance_book)
 
 	return doc
+
+
+@frappe.whitelist()
+def get_asset_depreciation_schedule(asset_name, status, finance_book=None):
+	"""Later ERPNext 15 releases load the Asset form through this endpoint instead."""
+	frappe.has_permission("Asset", "read", asset_name, throw=True)
+	return get_asset_depr_schedule_doc(asset_name, status, finance_book)

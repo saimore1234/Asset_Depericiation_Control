@@ -3,7 +3,8 @@
 Controlled editing of ERPNext **Asset Depreciation Schedules**: the schedule stays in
 Draft after the Asset is submitted, can be adjusted, and is locked once submitted.
 
-Developed and tested on Frappe 15.81.0 and ERPNext 15.78.1. It changes no ERPNext or
+Developed and tested on Frappe 15.81.0 and ERPNext 15.78.1. The ERPNext 15.127.0 source was
+reviewed for compatibility, but the tests have not been run on it. It changes no ERPNext or
 Frappe file, adds no DocType, custom field or role, and stores no data of its own.
 
 ## Why it is needed
@@ -41,7 +42,7 @@ save, as it does without this app. Edit the schedule after submitting the Asset.
 | Amounts | Unposted rows must be greater than zero. |
 | Depreciable value | The total of unposted rows may not exceed the Asset finance book's `value_after_depreciation - expected_value_after_useful_life`, less any draft Journal Entries linked to rows. |
 | Accumulated depreciation | Derived from the amounts on every save. It is not editable. |
-| Under-depreciation | Allowed. A notice is shown on submit. |
+| Under-depreciation | Allowed, with a notice on submit. Later ERPNext 15 releases require *Manual* schedules to total the depreciable value exactly. |
 | Asset values | Gross amount, method, finance book and the other values copied from the Asset cannot be changed. |
 | Shift-based schedules | ERPNext recalculates amounts only when you change a shift, which replaces manually edited amounts. |
 
@@ -64,7 +65,9 @@ child row. `ignore_permissions`, `ignore_validate` and
 `ignore_validate_update_after_submit` do not open the lock. Cancelling a document that was
 modified in memory is rejected too.
 
-Cancellation works as standard.
+Cancellation works as standard. One change is allowed: when ERPNext reverses a depreciation
+entry (restoring a disposed Asset, for example), the reversed Journal Entry can be unlinked
+from its row. A submitted reversing entry must exist.
 
 ### Correcting a submitted schedule
 
@@ -130,7 +133,7 @@ bench restart
 | `overrides/asset.py` | Keeps schedules in Draft on Asset submit; guards Asset cancel |
 | `overrides/asset_depreciation_schedule.py` | Applies the rules in the document lifecycle |
 | `overrides/depreciation_schedule.py` | Blocks direct writes to child rows |
-| `overrides/depreciation.py` | Three replaced whitelisted endpoints |
+| `overrides/depreciation.py` | Replaced whitelisted endpoints |
 | `public/js/*.js` | Grid behaviour and the Asset headline (convenience only) |
 | `tests/` | Automated tests |
 
@@ -143,6 +146,7 @@ bench restart
   * `split_asset`: clear message when the schedule is still draft
   * `get_asset_depr_schedule_doc`: returns the draft to the Asset form, whose chart
     otherwise fails with no Active schedule
+  * `get_asset_depreciation_schedule`: the same, for later ERPNext 15 releases
 * `doctype_js`: `Asset`, `Asset Depreciation Schedule`
 
 There are no monkey patches. `Asset.on_submit` is not copied: the override sets a
@@ -163,7 +167,7 @@ Covered: draft editing (amount, date, add, delete), derived accumulated deprecia
 depreciable value and salvage, invalid rows, frozen periods, posted-row protection,
 submitted locking (save, APIs, child rows, add, delete, reorder, cancel), roles and company
 permissions, posting without duplicates, Asset and schedule cancellation, amendment,
-scrap, value adjustment, split and each depreciation method.
+scrap and restore, value adjustment, split and each depreciation method.
 
 ## Known limitations
 
@@ -190,7 +194,7 @@ The app depends on these ERPNext internals. Check them and run the tests after u
 * `Asset.on_submit` and `convert_draft_asset_depr_schedules_into_active`
 * `AssetDepreciationSchedule.update_shift_depr_schedule`
 * `get_acc_frozen_upto`
-* the three overridden endpoints and their signatures
+* the overridden endpoints and their signatures
 
 Only one app can override a DocType class, so another app overriding `Asset` or
 `Asset Depreciation Schedule` would conflict. ERPNext v16 is not supported.

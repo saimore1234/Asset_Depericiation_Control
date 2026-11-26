@@ -15,13 +15,17 @@ from erpnext.assets.doctype.asset.asset import split_asset
 from erpnext.assets.doctype.asset.depreciation import (
 	get_depreciable_asset_depr_schedules_data,
 	make_depreciation_entry,
+	restore_asset,
 	scrap_asset,
 )
 
 from asset_depreciation_control.overrides.depreciation import (
 	make_depreciation_entry as guarded_make_depreciation_entry,
 )
-from asset_depreciation_control.overrides.depreciation import get_asset_depr_schedule_doc
+from asset_depreciation_control.overrides.depreciation import (
+	get_asset_depr_schedule_doc,
+	get_asset_depreciation_schedule,
+)
 from asset_depreciation_control.overrides.depreciation import split_asset as guarded_split_asset
 
 SCHEDULE = "Asset Depreciation Schedule"
@@ -688,6 +692,7 @@ class TestAssetDepreciationControl(FrappeTestCase):
 
 	def test_l_asset_form_gets_the_draft_schedule(self):
 		self.assertEqual(get_asset_depr_schedule_doc(self.asset.name, "Active").name, self.schedule.name)
+		self.assertEqual(get_asset_depreciation_schedule(self.asset.name, "Active").name, self.schedule.name)
 		self.submit_schedule()
 		self.assertEqual(get_asset_depr_schedule_doc(self.asset.name, "Active").docstatus, 1)
 
@@ -700,3 +705,22 @@ class TestAssetDepreciationControl(FrappeTestCase):
 			"erpnext.assets.doctype.asset_depreciation_schedule.asset_depreciation_schedule.get_asset_depr_schedule_doc",
 		):
 			self.assertTrue(overrides[method][-1].startswith("asset_depreciation_control."))
+
+	def test_l_restore_scrapped_asset(self):
+		# periods continue past today, so scrapping posts a part-period that restore reverses
+		asset = make_asset(periods=12)
+		get_schedule(asset).submit()
+		scrap_asset(asset.name)
+
+		restore_asset(asset.name)
+
+		self.assertNotEqual(reload(asset).status, "Scrapped")
+		self.assertEqual(get_schedule(asset, docstatus=1).status, "Active")
+
+	def test_unreversed_journal_entry_link_cannot_be_cleared(self):
+		doc = self.submit_schedule()
+		make_depreciation_entry(doc.name, doc.depreciation_schedule[0].schedule_date)
+		doc = reload(doc)
+		doc.depreciation_schedule[0].journal_entry = None
+		doc.flags.ignore_validate_update_after_submit = True
+		self.assertRejected(doc.save, "locked")
