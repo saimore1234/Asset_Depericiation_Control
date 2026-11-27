@@ -1,5 +1,6 @@
 import frappe
 from frappe import _
+from frappe.utils import get_link_to_form
 
 from erpnext.assets.doctype.asset_depreciation_schedule.asset_depreciation_schedule import (
 	AssetDepreciationSchedule,
@@ -38,27 +39,69 @@ class ControlledAssetDepreciationSchedule(AssetDepreciationSchedule):
 		if self.is_new() and self.docstatus == 1:
 			return
 
-		# While the Asset is in Draft, ERPNext regenerates the schedule itself.
-		if rules.get_asset_docstatus(self.asset) == 1:
+		asset_docstatus = rules.get_asset_docstatus(self.asset)
+		if asset_docstatus == 1:
 			rules.validate_draft(self)
+		elif asset_docstatus == 0 and self.get_doc_before_save() and not self.flags.adc_from_asset:
+			# a user editing the schedule, not ERPNext saving it along with the Asset
+			rules.validate_before_asset_submit(self)
 
 	def before_submit(self):
 		if not self.is_new() and rules.get_asset_docstatus(self.asset) == 1:
 			rules.validate_before_submit(self)
+
+	def prepare_draft_asset_depr_schedule_data(
+		self,
+		asset_doc,
+		row,
+		date_of_disposal=None,
+		date_of_return=None,
+		update_asset_finance_book_row=True,
+	):
+		"""ERPNext calls this on every save of a draft Asset, including the one made by Submit,
+		and rebuilds every schedule that is not Manual. Keep the rows instead, unless something
+		they were calculated from has changed.
+		"""
+		args = (asset_doc, row, date_of_disposal, date_of_return, update_asset_finance_book_row)
+		if self.is_new() or self.docstatus != 0 or date_of_disposal or date_of_return:
+			return super().prepare_draft_asset_depr_schedule_data(*args)
+
+		self.flags.adc_from_asset = True
+		rows = self.get("depreciation_schedule")
+		if rows and not rules.calculation_inputs_changed(self, asset_doc, row):
+			self.flags.adc_keep_rows = True
+			self.set_draft_asset_depr_schedule_details(asset_doc, row)
+			return
+
+		old = rules.dates_and_amounts(rows)
+		super().prepare_draft_asset_depr_schedule_data(*args)
+
+		if old and rules.dates_and_amounts(self.get("depreciation_schedule")) != old:
+			frappe.msgprint(
+				_(
+					"{0} was recalculated because the depreciation details of the Asset changed. Any manual changes to it were replaced."
+				).format(get_link_to_form(self.doctype, self.name)),
+				indicator="orange",
+				alert=True,
+			)
 
 	def update_shift_depr_schedule(self):
 		"""Recalculate a shift-based draft only when a shift was changed.
 
 		ERPNext recalculates on every save, which would discard edited amounts.
 		"""
+		if self.flags.adc_keep_rows:
+			return
+
 		before = self.get_doc_before_save()
-		if before and self.docstatus == 0 and rules.get_asset_docstatus(self.asset) == 1:
-			old_shifts = {row.name: row.shift for row in before.get("depreciation_schedule")}
-			if not any(
-				row.name in old_shifts and row.shift != old_shifts[row.name]
-				for row in self.get("depreciation_schedule")
-			):
-				return
+		if (
+			before
+			and self.docstatus == 0
+			and not self.flags.adc_from_asset
+			and rules.get_asset_docstatus(self.asset) in (0, 1)
+			and not rules.shifts_changed(self, before)
+		):
+			return
 
 		super().update_shift_depr_schedule()
 

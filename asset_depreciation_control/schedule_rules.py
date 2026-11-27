@@ -109,6 +109,96 @@ def validate_draft(doc):
 	validate_depreciable_value(doc, posted_names)
 
 
+def validate_before_asset_submit(doc):
+	"""Check a user's edits while the Asset itself is still a draft.
+
+	Dates and amounts may be changed, but not their total: ERPNext rejects an Asset whose
+	schedule leaves more than the salvage value, or silently raises the salvage value to match.
+	"""
+	before = doc.get_doc_before_save()
+	rows = doc.get("depreciation_schedule")
+
+	for idx, row in enumerate(rows, start=1):
+		row.idx = idx
+
+	validate_source_fields(doc, before)
+	old_rows = {row.name: row for row in before.get("depreciation_schedule")}
+	validate_journal_entry_links(doc, old_rows, is_new=False)
+	validate_rows(doc, old_rows, [], set(), is_new=False)
+	set_accumulated_depreciation(doc, set())
+
+	# changing a shift makes ERPNext recalculate the amounts itself
+	if doc.shift_based and shifts_changed(doc, before):
+		return
+
+	old_total = get_unposted_total(before, set())
+	new_total = get_unposted_total(doc, set())
+	if abs(new_total - old_total) > get_tolerance(doc):
+		currency = frappe.get_cached_value("Company", doc.company, "default_currency")
+		old_total, new_total = (
+			frappe.format_value(value, {"fieldtype": "Currency"}, currency=currency)
+			for value in (old_total, new_total)
+		)
+		frappe.throw(
+			_(
+				"Before the Asset is submitted, total depreciation must stay {0}; it is now {1}. Move the difference to another row, or change the salvage value on the Asset."
+			).format(old_total, new_total),
+			title=_("Total Depreciation Changed"),
+		)
+
+
+def shifts_changed(doc, before):
+	old_shifts = {row.name: row.shift for row in before.get("depreciation_schedule")}
+	return any(
+		row.name in old_shifts and row.shift != old_shifts[row.name]
+		for row in doc.get("depreciation_schedule")
+	)
+
+
+def dates_and_amounts(rows):
+	return [row_values(row, ("schedule_date", "depreciation_amount")) for row in rows]
+
+
+def calculation_inputs_changed(doc, asset_doc, row):
+	"""Has anything changed that ERPNext calculated the rows of this draft schedule from?"""
+	before = asset_doc.get_doc_before_save()
+	old_row = next((d for d in before.get("finance_books") if d.name == row.name), None) if before else None
+	if not old_row:
+		return True
+
+	def date(source, fieldname):
+		return getdate(source.get(fieldname)) if source.get(fieldname) else None
+
+	if date(before, "available_for_use_date") != date(asset_doc, "available_for_use_date"):
+		return True
+	if date(old_row, "depreciation_start_date") != date(row, "depreciation_start_date"):
+		return True
+
+	new = frappe.new_doc(SCHEDULE)
+	new.set_draft_asset_depr_schedule_details(asset_doc, row)
+	for fieldname in SOURCE_FIELDS:
+		# not set by set_draft_asset_depr_schedule_details, or identifiers only
+		if fieldname in ("asset", "company", "finance_book_id"):
+			continue
+		if normalise(doc, fieldname) == normalise(new, fieldname):
+			continue
+		if fieldname == "expected_value_after_useful_life" and is_filled_in_by_erpnext(doc, new):
+			continue
+		return True
+
+	return False
+
+
+def is_filled_in_by_erpnext(doc, new):
+	"""An empty salvage value is filled in by ERPNext with what the schedule leaves over."""
+	if flt(doc.expected_value_after_useful_life):
+		return False
+
+	accumulated = max(flt(d.accumulated_depreciation_amount) for d in doc.get("depreciation_schedule"))
+	left_over = flt(new.gross_purchase_amount) - accumulated
+	return abs(flt(new.expected_value_after_useful_life) - left_over) <= get_tolerance(doc)
+
+
 def validate_source_fields(doc, before):
 	for fieldname in SOURCE_FIELDS:
 		if normalise(doc, fieldname) != normalise(before, fieldname):

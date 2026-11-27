@@ -31,8 +31,17 @@ Until the schedule is submitted, do not expect to scrap, sell, split, capitalise
 with capitalisation, value-adjust or shift-allocate the Asset: ERPNext needs an Active
 schedule for these.
 
-While the Asset itself is still a draft, ERPNext regenerates the schedule on each Asset
-save, as it does without this app. Edit the schedule after submitting the Asset.
+## Editing while the Asset is still a draft
+
+The schedule can also be edited as soon as the Asset is saved. Dates and amounts can be
+changed and rows added or deleted, but **total depreciation must stay the same**: ERPNext
+rejects an Asset whose schedule leaves more than the salvage value, or silently raises the
+salvage value to match. To change the total, change the salvage value on the Asset, or edit
+after submitting it.
+
+Edits are kept when the Asset is saved or submitted. They are **replaced by a recalculated
+schedule**, with a notice, if the Asset's gross amount, opening depreciation,
+available-for-use date or finance book depreciation details change.
 
 ## Rules for a draft schedule (submitted Asset)
 
@@ -192,7 +201,8 @@ scrap and restore, value adjustment, split and each depreciation method.
 The app depends on these ERPNext internals. Check them and run the tests after upgrading:
 
 * `Asset.on_submit` and `convert_draft_asset_depr_schedules_into_active`
-* `AssetDepreciationSchedule.update_shift_depr_schedule`
+* `AssetDepreciationSchedule.update_shift_depr_schedule`, `prepare_draft_asset_depr_schedule_data`
+  and `set_draft_asset_depr_schedule_details`
 * `get_acc_frozen_upto`
 * the overridden endpoints and their signatures
 

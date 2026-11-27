@@ -625,6 +625,120 @@ class TestAssetDepreciationControl(FrappeTestCase):
 		asset.save()
 		self.assertEqual(amounts(get_schedule(asset)), [20000] * 3)
 
+	# --- draft Asset ----------------------------------------------------------
+
+	METHODS = (
+		{"depreciation_method": "Straight Line"},
+		{"depreciation_method": "Straight Line", "daily_prorata_based": 1},
+		{"depreciation_method": "Double Declining Balance"},
+		{"depreciation_method": "Written Down Value", "rate_of_depreciation": 40},
+		{"depreciation_method": "Manual"},
+	)
+
+	def move_amount(self, schedule, amount=100):
+		schedule.depreciation_schedule[0].depreciation_amount += amount
+		schedule.depreciation_schedule[1].depreciation_amount -= amount
+		schedule.save()
+		return amounts(reload(schedule))
+
+	def test_m_edits_on_draft_asset_survive_save_and_submit(self):
+		for finance_book in self.METHODS:
+			for salvage in (0, 6000):
+				with self.subTest(salvage=salvage, **finance_book):
+					asset = make_asset(submit=False, offset=14, salvage=salvage, **finance_book)
+					edited = self.move_amount(get_schedule(asset))
+
+					# twice: ERPNext may fill in the salvage value during the first save
+					reload(asset).save()
+					self.assertEqual(amounts(get_schedule(asset)), edited)
+					reload(asset).save()
+					self.assertEqual(amounts(get_schedule(asset)), edited)
+					reload(asset).submit()
+
+					schedule = get_schedule(asset)
+					self.assertEqual(schedule.docstatus, 0)
+					self.assertEqual(amounts(schedule), edited)
+
+					# and still editable, then submittable, after the Asset is submitted
+					edited = self.move_amount(schedule)
+					schedule = reload(schedule)
+					schedule.submit()
+					self.assertEqual(amounts(reload(schedule)), edited)
+
+	def test_m_existing_asset_with_opening_depreciation(self):
+		# bought last year, monthly reducing balance, rate worked out from the salvage value
+		start = add_months(period_start(), -12)
+		asset = make_asset(submit=False, depreciation_method="Written Down Value")
+		asset = reload(asset)
+		asset.purchase_date = asset.available_for_use_date = start
+		asset.opening_accumulated_depreciation = 15000
+		asset.opening_number_of_booked_depreciations = 12
+		asset.finance_books[0].update(
+			{
+				"total_number_of_depreciations": 36,
+				"expected_value_after_useful_life": 3000,
+				"rate_of_depreciation": 0,
+				"depreciation_start_date": get_last_day(period_start()),
+			}
+		)
+		asset.save()
+
+		edited = self.move_amount(get_schedule(asset))
+		reload(asset).save()
+		self.assertEqual(amounts(get_schedule(asset)), edited)
+		reload(asset).submit()
+
+		schedule = get_schedule(asset)
+		self.assertEqual(amounts(schedule), edited)
+		self.assertAlmostEqual(
+			accumulated(schedule)[0], 15000 + edited[0], places=2
+		)
+
+	def test_m_date_edit_on_draft_asset_survives_submit(self):
+		for method in ("Straight Line", "Manual"):
+			with self.subTest(method=method):
+				asset = make_asset(submit=False, depreciation_method=method)
+				schedule = get_schedule(asset)
+				date = add_days(schedule.depreciation_schedule[0].schedule_date, -3)
+				schedule.depreciation_schedule[0].schedule_date = date
+				schedule.save()
+				reload(asset).submit()
+				self.assertEqual(get_schedule(asset).depreciation_schedule[0].schedule_date, getdate(date))
+
+	def test_m_total_cannot_change_before_asset_submit(self):
+		asset = make_asset(submit=False)
+		for amount in (9000, 11000):
+			schedule = get_schedule(asset)
+			schedule.depreciation_schedule[0].depreciation_amount = amount
+			self.assertRejected(schedule.save, "total depreciation must stay")
+
+		schedule = get_schedule(asset)
+		schedule.gross_purchase_amount = 1
+		self.assertRejected(schedule.save, "comes from the Asset")
+
+	def test_m_changed_asset_details_recalculate_the_schedule(self):
+		changes = (
+			lambda a: a.update({"gross_purchase_amount": 66000, "purchase_amount": 66000}),
+			lambda a: a.finance_books[0].update({"total_number_of_depreciations": 4}),
+			lambda a: a.finance_books[0].update({"expected_value_after_useful_life": 3000}),
+			lambda a: a.finance_books[0].update(
+				{"depreciation_start_date": get_last_day(add_months(period_start(), 1))}
+			),
+		)
+
+		def rows(asset):
+			return [(d.schedule_date, d.depreciation_amount) for d in get_schedule(asset).depreciation_schedule]
+
+		for change in changes:
+			asset = make_asset(submit=False)
+			self.move_amount(get_schedule(asset))
+			edited = rows(asset)
+
+			doc = reload(asset)
+			change(doc)
+			doc.save()
+			self.assertNotEqual(rows(asset), edited)
+
 	def test_l_disposal_needs_a_submitted_schedule(self):
 		self.assertRejected(lambda: scrap_asset(self.asset.name), "Schedule not found")
 

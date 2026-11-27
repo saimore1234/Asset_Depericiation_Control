@@ -2,18 +2,19 @@
 (function () {
 	const TABLE = "depreciation_schedule";
 
-	function asset_is_submitted(frm) {
-		return frm.doc.__onload && frm.doc.__onload.asset_docstatus === 1;
+	function asset_docstatus(frm) {
+		return frm.doc.__onload && frm.doc.__onload.asset_docstatus;
 	}
 
+	// draft schedule of a draft or submitted Asset
 	function is_editable_draft(frm) {
-		return frm.doc.docstatus === 0 && asset_is_submitted(frm);
+		return frm.doc.docstatus === 0 && [0, 1].includes(asset_docstatus(frm));
 	}
 
 	function set_grid_state(frm) {
 		const locked = frm.doc.docstatus > 0;
-		// For a draft Asset, leave ERPNext's own behaviour in place.
-		if (!locked && !asset_is_submitted(frm)) return;
+		// A new, unsaved schedule keeps ERPNext's own behaviour.
+		if (!locked && !is_editable_draft(frm)) return;
 
 		const grid = frm.fields_dict[TABLE].grid;
 		frm.set_df_property(TABLE, "read_only", locked ? 1 : 0);
@@ -59,12 +60,15 @@
 			set_grid_state(frm);
 
 			if (is_editable_draft(frm)) {
-				frm.set_intro(
-					__(
-						"Draft: you can edit, add and delete unposted rows. No depreciation is posted until this schedule is submitted."
-					),
-					"orange"
-				);
+				const message =
+					asset_docstatus(frm) === 0
+						? __(
+								"Draft Asset: you can edit, add and delete rows, but total depreciation must stay the same. Changing depreciation details on the Asset recalculates this schedule."
+						  )
+						: __(
+								"Draft: you can edit, add and delete unposted rows. No depreciation is posted until this schedule is submitted."
+						  );
+				frm.set_intro(message, "orange");
 			}
 		},
 	});
